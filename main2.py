@@ -10,6 +10,10 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from lungprediction import chestScanPrediction
 from datetime import datetime
+from sqlalchemy import LargeBinary
+import base64
+
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -21,6 +25,14 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Ensure the upload folder exists
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+    
+def delete_file(file_path):
+    try:
+        os.remove(file_path)
+        print(f"File {file_path} deleted successfully.")
+    except Exception as e:
+        print(f"Error deleting file {file_path}: {e}")
+
 
 # Database connection details
 db_user = "root"
@@ -54,15 +66,13 @@ class Patient(Base):
     age = Column(Integer)
     gender = Column(String(10))
     address = Column(Text)
-    ct_image_path = Column(Text)
+    ct_image_data = Column(LargeBinary)  # Store image as binary data (BLOB)
     prediction_result = Column(Text)
     prediction_image_path = Column(Text)
     time = Column(String(100))
     user_id = Column(Integer, ForeignKey('users.id'))
     user = relationship('User', back_populates='patients')
 
-# Create tables if they don't exist
-Base.metadata.create_all(engine)
 
 # API to sign up a new user
 @app.route('/signup', methods=['POST'])
@@ -108,6 +118,7 @@ def login():
         return jsonify({'error': 'Invalid email or password'}), 401
     
 # Lung Cancer Prediction route
+
 @app.route('/lungpredict', methods=["POST"])
 def lungpredict():
     user_id = request.form.get('user_id')
@@ -127,14 +138,25 @@ def lungpredict():
         return jsonify({'error': 'No file provided'}), 400
 
     f = request.files['patient_ct_image']
+    image_data = f.read()  # Read the image file as binary data
 
-    # Save the uploaded image file to the UPLOAD_FOLDER
+    # Save the file temporarily to use with the chestScanPrediction function
     filename = secure_filename(f.filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    f.save(file_path)
+    temp_file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     
-    # Call the lung cancer prediction function using the saved file path
-    prediction_image_path, prediction_result = chestScanPrediction(file_path)
+    # Save the file to a temporary location
+    with open(temp_file_path, 'wb') as temp_file:
+        temp_file.write(image_data)
+
+    # Call the lung cancer prediction function using the temporary file path
+    prediction_image_path, prediction_result = chestScanPrediction(temp_file_path)
+    
+    # Clean up: Remove the temporary file after processing
+    delete_file(temp_file_path)
+
+    # Clean up: Remove the temporary file after processing
+    if os.path.exists(temp_file_path):
+        os.remove(temp_file_path)
 
     # Assuming chestScanPrediction returns (label, probabilities)
     label = prediction_result[0]  # First part of the result is the predicted label
@@ -150,7 +172,7 @@ def lungpredict():
         age=int(patient_age),
         gender=patient_gender,
         address=patient_address,
-        ct_image_path=file_path,  # Store the saved file path
+        ct_image_data=image_data,  # Store the image as binary data (BLOB)
         prediction_result=label,  # Store the prediction label
         prediction_image_path=prediction_image_path,  # Store the image path of the predicted result
         time=time,
@@ -160,14 +182,12 @@ def lungpredict():
     session.add(new_patient)
     session.commit()
 
-    # Return JSON response
     return jsonify({
         'message': 'Prediction completed and data saved.',
         'prediction': label,  # Predicted label
         'probabilities': probabilities,  # Probability values converted to list
-        'image_path': prediction_image_path
     }), 200
-    
+      
 # API to get all patient data by user ID
 @app.route('/getAllData/<int:user_id>', methods=['GET'])
 def get_all_data(user_id):
@@ -182,6 +202,9 @@ def get_all_data(user_id):
     # Return the patient data
     patient_data = []
     for patient in patients:
+        # Encode the image data to Base64 for sending via JSON
+        image_base64 = base64.b64encode(patient.ct_image_data).decode('utf-8') if patient.ct_image_data else None
+
         patient_data.append({
             'patient_id': patient.id,
             'patient_name': patient.name,
@@ -189,9 +212,9 @@ def get_all_data(user_id):
             'patient_gender': patient.gender,
             'patient_address': patient.address,
             'time': patient.time,
-            'ct_image_path': patient.ct_image_path,
+            'ct_image_base64': image_base64,  # Send image as Base64 string
             'prediction_result': patient.prediction_result,
-            'prediction_image_path': patient.prediction_image_path
+            'prediction_image_path': patient.prediction_image_path  # This path can be removed if storing all images as binary
         })
 
     return jsonify({'user_id': user.id, 'patients': patient_data}), 200

@@ -1,0 +1,11 @@
+sqlalchemy
+pymysql
+cryptography
+flask
+passlib
+bcrypt
+flask-cors
+Werkzeug
+matplotlib
+numpy
+keras

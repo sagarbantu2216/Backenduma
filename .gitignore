@@ -1,1 +1,4 @@
 lung
+uploads
+ct_incep_best_model.hdf5
+__pycache__/lungprediction.cpython-312.pyc
