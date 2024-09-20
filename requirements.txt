@@ -9,3 +9,4 @@ Werkzeug
 matplotlib
 numpy
 keras
+tensorflow
